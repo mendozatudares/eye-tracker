@@ -79,14 +79,14 @@ def find_eyeball_position(min_max, cx, cy):
             normal = 0, left = 1, right = 2, up = 3
     """
     x_ratio = (min_max[0][0] - cx) / (cx - min_max[1][0])
-    y_ratio = (cy - min_max[0][1]) / (min_max[1][1] - cy)
+    # y_ratio = (cy - min_max[0][1]) / (min_max[1][1] - cy)
 
     if x_ratio > 3:
         return 1
     elif x_ratio < 0.33:
         return 2
-    elif y_ratio < 0.33:
-        return 3
+    # elif y_ratio < 0.33:
+        # return 3
     else:
         return 0
 
@@ -136,7 +136,7 @@ def print_eye_pos(img, left, right):
     directions = {
             1: 'Left',
             2: 'Right',
-            3: 'Up',
+            # 3: 'Up',
         }
     if left != 0:
         text = "Left: " + directions[left]
@@ -164,11 +164,6 @@ def main():
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # convert to grayscale
         rects = detector(gray, 1) # rects contain all the faces detected
 
-        # use histogram equalization to improve contrast
-        equal = cv2.equalizeHist(gray)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        clahe = clahe.apply(equal)
-
         for (i, rect) in enumerate(rects):
             shape = predictor(gray, rect)
             shape = shape_to_np(shape)
@@ -183,10 +178,14 @@ def main():
             mid = (shape[42][0] + shape[39][0]) >> 1
             eyes_gray = cv2.cvtColor(eyes, cv2.COLOR_BGR2GRAY)
 
+            # use histogram equalization to improve contrast
+            equal = cv2.equalizeHist(eyes_gray[eyes_gray != 255])
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            clahe = clahe.apply(equal)
+            eyes_gray[eyes_gray != 255] = clahe.flatten()
+
             # convert the equalized grayscale image to binary image
-            threshold = np.median(eyes_gray[eyes_gray != 255])
-            cv2.putText(img, str(threshold), (30, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
-            _, thresh = cv2.threshold(eyes_gray, threshold, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(eyes_gray, 127, 255, cv2.THRESH_BINARY)
             thresh = process_thresh(thresh)
 
             left_pos = contouring(thresh[:, 0:mid], mid, img, left_min_max)
@@ -197,9 +196,6 @@ def main():
                 # cv2.circle(img, (x, y), 2, (0, 0, 255), -1)
 
         cv2.imshow("Result", img)
-        cv2.imshow("Gray", eyes_gray)
-        cv2.imshow("Thresh", thresh)
-        cv2.imshow("CLAHE", clahe)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
