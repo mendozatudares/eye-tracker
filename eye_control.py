@@ -1,6 +1,8 @@
-import numpy as np
 import cv2
 import dlib
+import numpy as np
+
+KERNEL = np.ones((9, 9), np.uint8)
 
 def shape_to_np(shape, dtype="int"):
     """
@@ -47,6 +49,42 @@ def eye_on_mask(mask, side, shape):
 
     return mask, min_max
 
+def process_mask(img, left, right, shape):
+    """
+    Mask image such that only the detected eyes are visible, return bounding boxes of eyes
+
+    Parameters:
+        img (np.ndarray): original image
+        left (list[int]): facial landmark numbers of left eye
+        right (list[int]): facial landmark numbers of right eye
+        shape (list[uint32]): facial landmarks
+
+    Returns:
+        gray (np.ndarray): processed masked image
+        left_min_max (list[tuple]): top left and bottom right coorindates of left eye's AABB
+        right_min_max (list[tuple]): top left and bottom right coorindates of right eye's AABB
+    """
+    # mask image such that only eye ROIs are visible
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    mask, left_min_max = eye_on_mask(mask, left, shape)
+    mask, right_min_max = eye_on_mask(mask, right, shape)
+    mask = cv2.dilate(mask, KERNEL, 5)
+    eyes = cv2.bitwise_and(img, img, mask=mask)
+    mask = (eyes == [0, 0, 0]).all(axis=2)
+    eyes[mask] = [255, 255, 255]
+
+    # convert image to grayscale
+    gray = cv2.cvtColor(eyes, cv2.COLOR_BGR2GRAY)
+
+    # use histogram equalization to improve contrast of eyes
+    equal = cv2.equalizeHist(gray[gray != 255])
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    clahe = clahe.apply(equal)
+    gray[gray != 255] = clahe.flatten()
+
+    return gray, left_min_max, right_min_max
+
+
 def process_thresh(thresh):
     """
     Preprocess threshold image
@@ -76,17 +114,15 @@ def find_eyeball_position(min_max, cx, cy):
 
     Returns:
         pos (int): the position of the eyeball
-            normal = 0, left = 1, right = 2, up = 3
+            normal = 0, left = -1, right = 1
     """
     x_ratio = (min_max[0][0] - cx) / (cx - min_max[1][0])
-    # y_ratio = (cy - min_max[0][1]) / (min_max[1][1] - cy)
 
-    if x_ratio > 3:
-        return 1
+    # TODO: more testing on these thresholds to determine direction
+    if x_ratio > 2.5:
+        return -1
     elif x_ratio < 0.33:
-        return 2
-    # elif y_ratio < 0.33:
-        # return 3
+        return 1
     else:
         return 0
 
@@ -105,7 +141,6 @@ def contouring(thresh, mid, img, min_max, right=False):
 
     Returns:
         pos (int): the position of the eyeball
-            normal = 0, left = 1, right = 2, up = 3
     """
     _, cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     try:
@@ -134,10 +169,9 @@ def print_eye_pos(img, left, right):
         None
     """
     directions = {
-            1: 'Left',
-            2: 'Right',
-            # 3: 'Up',
-        }
+        -1: 'Left',
+        1: 'Right',
+    }
     if left != 0:
         text = "Left: " + directions[left]
         cv2.putText(img, text, (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
@@ -145,63 +179,58 @@ def print_eye_pos(img, left, right):
         text = "Right: " + directions[right]
         cv2.putText(img, text, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
 
-def main():
-    detector = dlib.get_frontal_face_detector()
-    predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
-    kernel = np.ones((9, 9), np.uint8)
+class Webcam:
+    def __init__(self, display=False):
+        self._detector = dlib.get_frontal_face_detector()
+        self._predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
 
-    left = [36, 37, 38, 39, 40, 41]
-    right = [42, 43, 44, 45, 46, 47]
+        self._left = [36, 37, 38, 39, 40, 41]
+        self._right = [42, 43, 44, 45, 46, 47]
 
-    cap = cv2.VideoCapture(0) # initialize video capture
+        self._cap = cv2.VideoCapture(0) # initialize video capture
 
-    while True:
-        ret, img = cap.read()
+        self.display = display
+
+    def get_eye_pos(self):
+        ret, img = self._cap.read()
         if not ret:
-            continue
+            return 0, 0
 
         thresh = img.copy()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # convert to grayscale
-        rects = detector(gray, 1) # rects contain all the faces detected
+        rects = self._detector(gray, 1) # rects contain all the faces detected
+        left_pos, right_pos = 0, 0
+        
+        # TODO: find the rect closest to the center of the image, use that only
+        for rect in rects:
+            # get shape
+            shape = shape_to_np(self._predictor(gray, rect))
 
-        for (i, rect) in enumerate(rects):
-            shape = predictor(gray, rect)
-            shape = shape_to_np(shape)
-
-            mask = np.zeros(img.shape[:2], dtype=np.uint8)
-            mask, left_min_max = eye_on_mask(mask, left, shape)
-            mask, right_min_max = eye_on_mask(mask, right, shape)
-            mask = cv2.dilate(mask, kernel, 5)
-            eyes = cv2.bitwise_and(img, img, mask=mask)
-            mask = (eyes == [0, 0, 0]).all(axis=2)
-            eyes[mask] = [255, 255, 255]
-            mid = (shape[42][0] + shape[39][0]) >> 1
-            eyes_gray = cv2.cvtColor(eyes, cv2.COLOR_BGR2GRAY)
-
-            # use histogram equalization to improve contrast
-            equal = cv2.equalizeHist(eyes_gray[eyes_gray != 255])
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            clahe = clahe.apply(equal)
-            eyes_gray[eyes_gray != 255] = clahe.flatten()
+            # get masked grayscale image and bounding boxes for each eye
+            mask, left_min_max, right_min_max = process_mask(img, self._left, self._right, shape)
 
             # convert the equalized grayscale image to binary image
-            _, thresh = cv2.threshold(eyes_gray, 127, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
             thresh = process_thresh(thresh)
 
+            # calculate midpoint and get left and right eye position
+            mid = (shape[42][0] + shape[39][0]) >> 1
             left_pos = contouring(thresh[:, 0:mid], mid, img, left_min_max)
             right_pos = contouring(thresh[:, mid:], mid, img, right_min_max, True)
+
+        if self.display:
             print_eye_pos(img, left_pos, right_pos)
+            cv2.imshow("Result", img)
+            
+        return left_pos, right_pos
 
-            # for (x, y) in shape:
-                # cv2.circle(img, (x, y), 2, (0, 0, 255), -1)
 
-        cv2.imshow("Result", img)
+def test():
+    wc = Webcam()
+    while True:
+        print(wc.get_eye_pos())
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cap.release()
-    cv2.destroyAllWindows()
-
 if __name__ == "__main__":
-    main()
-
+    test()
