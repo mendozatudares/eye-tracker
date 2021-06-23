@@ -226,7 +226,7 @@ class Webcam:
 
 
 def test():
-    wc = Webcam()
+    wc = Webcam(display=True)
     while True:
         print(wc.get_eye_pos())
         if cv2.waitKey(1) & 0xFF == ord('q'):
