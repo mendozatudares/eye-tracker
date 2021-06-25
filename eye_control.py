@@ -1,55 +1,58 @@
 import cv2
-import dlib
+import mediapipe as mp
 import numpy as np
 
 KERNEL = np.ones((9, 9), np.uint8)
 
-def shape_to_np(shape, dtype="int"):
+def landmarks_to_np(landmarks, shape, dtype="int"):
     """
-    Convert dlib detected object into a numpy array
+    Convert mediapipe face mesh into a numpy array
 
     Parameters:
-        shape (dlib.full_object_detection): dlib detected object to convert
+        landmarks (mp.multi_face_landmarks): mediapipe detected object to convert
 
     Returns:
         coords (np.ndarray): coordinates of each facial landmark
     """
     # initialize the list of (x, y)-coordinates
-    coords = np.zeros((68, 2), dtype=dtype)
+    coords = np.zeros((468, 2), dtype=dtype)
     # iterate and convert facial landmarks to coordinates
-    for i in range(0, 68):
-        coords[i] = (shape.part(i).x, shape.part(i).y)
+    for i in range(0, 468):
+        landmark = landmarks[i]
+        relative_x = int(landmark.x * shape[1])
+        relative_y = int(landmark.y * shape[0])
+        coords[i] = (relative_x, relative_y)
     # return list of coordinates
     return coords
 
-def eye_on_mask(mask, side, shape):
+def eye_on_mask(mask, side, landmarks):
     """
     Create ROI on mask of the size of the eyes and also return the extreme points
 
     Parameters:
         mask (np.uint8): mask to draw eyes on
         side (list[int]): facial landmark numbers of eye
-        shape (list[uiint32]): facial landmarks
+        landmarks (list[uiint32]): facial landmarks
 
     Returns:
         mask (np.uint8): mask with ROI drawn
         min_max (list[tuple]): top left and bottom right coordinates of ROI's AABB
     """
     # create mask for eye ROI
-    points = [shape[i] for i in side]
+    points = [landmarks[i] for i in side]
     points = np.array(points, dtype=np.int32)
     mask = cv2.fillConvexPoly(mask, points, 255)
 
     # find minimum and maximum coordinate locations of eye
-    min_x = points[0][0]
-    min_y = (points[1][1] + points[2][1]) >> 1
-    max_x = points[3][0]
-    max_y = (points[4][1] + points[5][1]) >> 1
+    min_x = np.min(points[:,0])
+    min_y = np.min(points[:,1])
+    max_x = np.max(points[:,0])
+    max_y = np.max(points[:,1])
     min_max = [(min_x, min_y), (max_x, max_y)]
 
     return mask, min_max
 
-def process_mask(img, left, right, shape):
+def process_mask(img, left, right, landmarks):
     """
     Mask image such that only the detected eyes are visible, return bounding boxes of eyes
 
@@ -57,7 +60,7 @@ def process_mask(img, left, right, shape):
         img (np.ndarray): original image
         left (list[int]): facial landmark numbers of left eye
         right (list[int]): facial landmark numbers of right eye
-        shape (list[uint32]): facial landmarks
+        landmarks (list[uint32]): facial landmarks
 
     Returns:
         gray (np.ndarray): processed masked image
@@ -66,15 +69,15 @@ def process_mask(img, left, right, shape):
     """
     # mask image such that only eye ROIs are visible
     mask = np.zeros(img.shape[:2], dtype=np.uint8)
-    mask, left_min_max = eye_on_mask(mask, left, shape)
-    mask, right_min_max = eye_on_mask(mask, right, shape)
+    mask, left_min_max = eye_on_mask(mask, left, landmarks)
+    mask, right_min_max = eye_on_mask(mask, right, landmarks)
     mask = cv2.dilate(mask, KERNEL, 5)
     eyes = cv2.bitwise_and(img, img, mask=mask)
     mask = (eyes == [0, 0, 0]).all(axis=2)
     eyes[mask] = [255, 255, 255]
 
     # convert image to grayscale
-    gray = cv2.cvtColor(eyes, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(eyes, cv2.COLOR_RGB2GRAY)
 
     # use histogram equalization to improve contrast of eyes
     equal = cv2.equalizeHist(gray[gray != 255])
@@ -142,7 +145,7 @@ def contouring(thresh, mid, img, min_max, right=False):
     Returns:
         pos (int): the position of the eyeball
     """
-    _, cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     try:
         cnt = max(cnts, key=cv2.contourArea)
         M = cv2.moments(cnt)
@@ -156,7 +159,7 @@ def contouring(thresh, mid, img, min_max, right=False):
     except:
         return 0
 
-def print_eye_pos(img, left, right):
+def print_eye_pos(eye_pos):
     """
     Print where the eyes are looking and display on the image
 
@@ -172,65 +175,78 @@ def print_eye_pos(img, left, right):
         -1: 'Left',
         1: 'Right',
     }
+    left, right = eye_pos
+
     if left != 0:
-        text = "Left: " + directions[left]
-        cv2.putText(img, text, (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
+        print("Left:", directions[left])
     if right != 0:
-        text = "Right: " + directions[right]
-        cv2.putText(img, text, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
+        print("Right:", directions[right])
 
 class Webcam:
-    def __init__(self, display=False):
-        self._detector = dlib.get_frontal_face_detector()
-        self._predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
-
-        self._left = [36, 37, 38, 39, 40, 41]
-        self._right = [42, 43, 44, 45, 46, 47]
-
+    def __init__(self):
         self._cap = cv2.VideoCapture(0) # initialize video capture
+        self._face_mesh = mp.solutions.face_mesh
+        self._left = [7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173, 246]
+        self._right = [249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387, 388, 390, 398, 466]
 
-        self.display = display
+        self.running = False
+        self.eye_pos = (0, 0)
+
+    def run(self):
+        self.running = True
+        with self._face_mesh.FaceMesh(
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5) as face_mesh:
+
+            while self.running and self._cap.isOpened():
+                success, img = self._cap.read()
+                if not success:
+                    continue
+
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                results = face_mesh.process(img)
+                if not results.multi_face_landmarks:
+                    continue
+
+                # get masked grayscale image and bounding boxes for each eye
+                landmarks = landmarks_to_np(results.multi_face_landmarks[0].landmark, img.shape)
+                mask, left_min_max, right_min_max = process_mask(img, self._left, self._right, landmarks)
+
+                # convert the equalized grayscale image to binary image
+                _, thresh = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+                thresh = process_thresh(thresh)
+
+                # get midpoint between eyes and get left and right eye position
+                mid = landmarks[6][0]
+                left_pos = contouring(thresh[:, 0:mid], mid, img, left_min_max)
+                right_pos = contouring(thresh[:, mid:], mid, img, right_min_max, True)
+
+                self.eye_pos = (left_pos, right_pos)
+                print_eye_pos(self.eye_pos)
 
     def get_eye_pos(self):
-        ret, img = self._cap.read()
-        if not ret:
-            return 0, 0
+        return self.eye_pos
 
-        thresh = img.copy()
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # convert to grayscale
-        rects = self._detector(gray, 1) # rects contain all the faces detected
-        left_pos, right_pos = 0, 0
-        
-        # TODO: find the rect closest to the center of the image, use that only
-        for rect in rects:
-            # get shape
-            shape = shape_to_np(self._predictor(gray, rect))
-
-            # get masked grayscale image and bounding boxes for each eye
-            mask, left_min_max, right_min_max = process_mask(img, self._left, self._right, shape)
-
-            # convert the equalized grayscale image to binary image
-            _, thresh = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-            thresh = process_thresh(thresh)
-
-            # calculate midpoint and get left and right eye position
-            mid = (shape[42][0] + shape[39][0]) >> 1
-            left_pos = contouring(thresh[:, 0:mid], mid, img, left_min_max)
-            right_pos = contouring(thresh[:, mid:], mid, img, right_min_max, True)
-
-        if self.display:
-            print_eye_pos(img, left_pos, right_pos)
-            cv2.imshow("Result", img)
-            
-        return left_pos, right_pos
-
+    def terminate(self):
+        self.running = False
 
 def test():
-    wc = Webcam(display=True)
-    while True:
-        print(wc.get_eye_pos())
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+    from threading import Thread
+    import time
+
+    # run webcam thread
+    wc = Webcam()
+    th = Thread(target=wc.run, name='webcam')
+    th.start()
+
+    # wait for some time
+    time.sleep(10)
+
+    # signal termination
+    wc.terminate()
+
+    # wait for actual termination
+    th.join()
 
 if __name__ == "__main__":
     test()
