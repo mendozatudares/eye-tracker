@@ -233,20 +233,25 @@ class Webcam:
 def test():
     from threading import Thread
     import time
+    import sys
 
     # run webcam thread
     wc = Webcam()
     th = Thread(target=wc.run, name='webcam')
     th.start()
 
-    # wait for some time
-    time.sleep(10)
-
-    # signal termination
-    wc.terminate()
+    # wait for some time, then signal termination
+    try:
+        time.sleep(10)
+        wc.terminate()
+    except KeyboardInterrupt:
+        print("interrupted")
+        wc.terminate()
 
     # wait for actual termination
     th.join()
+
+    sys.exit(0)
 
 if __name__ == "__main__":
     test()
