@@ -67,21 +67,40 @@ def handle_eye_pos(pos, prev_pos, dt, dwell_action):
     return moved, pos, False
 
 def main():
-    dwell_action = handle_args()
+    from threading import Thread
+    import time
+    import sys
 
+    dwell_action = handle_args()
     # highlight_minecraft_window()
 
-    wc = Webcam()
+
+    # initialize dwelling timer
     dt = Timer()
     dt.run()
-    prev_pos = (0, 0)
 
-    while True:
-        pos = wc.get_eye_pos()
-        moved, prev_pos, term = handle_eye_pos(pos, prev_pos, dt, dwell_action)
+    # initialize webcam and run thread
+    wc = Webcam()
+    th = Thread(target=wc.run, name='webcam')
+    th.start()
 
-        if term:
-            break
+    try:
+        prev_pos = (0, 0)
+        while True:
+            pos = wc.get_eye_pos()
+            moved, prev_pos, term = handle_eye_pos(pos, prev_pos, dt, dwell_action)
+
+            if term:
+                break
+        wc.terminate()
+    except KeyboardInterrupt:
+        wc.terminate()
+
+    # wait for webcam to shut down
+    th.join()
+
+    sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

@@ -183,13 +183,14 @@ def print_eye_pos(eye_pos):
         print("Right:", directions[right])
 
 class Webcam:
-    def __init__(self):
+    def __init__(self, debug=False):
         self._cap = cv2.VideoCapture(0) # initialize video capture
         self._face_mesh = mp.solutions.face_mesh
         self._left = [7, 33, 133, 144, 145, 153, 154, 155, 157, 158, 159, 160, 161, 163, 173, 246]
         self._right = [249, 263, 362, 373, 374, 380, 381, 382, 384, 385, 386, 387, 388, 390, 398, 466]
 
         self.running = False
+        self.debug   = debug
         self.eye_pos = (0, 0)
 
     def run(self):
@@ -222,7 +223,11 @@ class Webcam:
                 right_pos = contouring(thresh[:, mid:], mid, img, right_min_max, True)
 
                 self.eye_pos = (left_pos, right_pos)
-                print_eye_pos(self.eye_pos)
+
+                if self.debug:
+                    print_eye_pos(self.eye_pos)
+
+            self._cap.release()
 
     def get_eye_pos(self):
         return self.eye_pos
@@ -236,7 +241,7 @@ def test():
     import sys
 
     # run webcam thread
-    wc = Webcam()
+    wc = Webcam(debug=True)
     th = Thread(target=wc.run, name='webcam')
     th.start()
 
