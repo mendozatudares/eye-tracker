@@ -122,7 +122,7 @@ def find_eyeball_position(min_max, cx, cy):
     x_ratio = (min_max[0][0] - cx) / (cx - min_max[1][0])
 
     # TODO: more testing on these thresholds to determine direction
-    if x_ratio > 2.5:
+    if x_ratio > 1.5:
         return -1
     elif x_ratio < 0.33:
         return 1
@@ -241,7 +241,7 @@ def test():
     import sys
 
     # run webcam thread
-    wc = Webcam(debug=True)
+    wc = Webcam(debug=False)
     th = Thread(target=wc.run, name='webcam')
     th.start()
 
@@ -250,7 +250,6 @@ def test():
         time.sleep(10)
         wc.terminate()
     except KeyboardInterrupt:
-        print("interrupted")
         wc.terminate()
 
     # wait for actual termination
